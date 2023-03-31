@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
-	"os"
 )
 
 const (
@@ -33,7 +32,7 @@ type Codec struct {
 	r io.Reader
 }
 
-func NewCodec(f *os.File) *Codec {
+func NewCodec(f io.ReadWriter) *Codec {
 	return &Codec{
 		w: bufio.NewWriter(f),
 		r: bufio.NewReader(f),
@@ -46,10 +45,10 @@ func (c *Codec) EncodeEntry(entry *Entry) (int64, error) {
 	}
 	prefixSize := CRC_SIZE + TSSTAMP_SIZE + KEY_SIZE + VALUE_SIZE
 	prefixBuffer := make([]byte, prefixSize)
-	byteOrder.PutUint32(prefixBuffer, entry.Checksum)
-	byteOrder.PutUint32(prefixBuffer, entry.Tstamp)
-	byteOrder.PutUint16(prefixBuffer, entry.KeySize)
-	byteOrder.PutUint32(prefixBuffer, entry.ValueSize)
+	byteOrder.PutUint32(prefixBuffer[:CRC_SIZE], entry.Checksum)
+	byteOrder.PutUint32(prefixBuffer[CRC_SIZE:CRC_SIZE+TSSTAMP_SIZE], entry.Tstamp)
+	byteOrder.PutUint16(prefixBuffer[CRC_SIZE+TSSTAMP_SIZE:CRC_SIZE+TSSTAMP_SIZE+KEY_SIZE], entry.KeySize)
+	byteOrder.PutUint32(prefixBuffer[CRC_SIZE+TSSTAMP_SIZE+KEY_SIZE:], entry.ValueSize)
 
 	_, err := c.w.Write(prefixBuffer)
 	if err != nil {
@@ -64,6 +63,9 @@ func (c *Codec) EncodeEntry(entry *Entry) (int64, error) {
 	_, err = c.w.Write(entry.Value)
 	if err != nil {
 		return 0, ErrWritingValue
+	}
+	if flushErr := c.w.Flush(); flushErr != nil {
+		return 0, flushErr
 	}
 	return int64(prefixSize + len(entry.Key) + len(entry.Value)), nil
 }
@@ -141,10 +143,10 @@ func (c *Codec) EncodeHint(hint *Hint) (int64, error) {
 	}
 	prefixSize := TSSTAMP_SIZE + KEY_SIZE + VALUE_SIZE + VALUE_OFFSET_SIZE
 	prefixBuffer := make([]byte, prefixSize)
-	byteOrder.PutUint32(prefixBuffer, hint.Tstamp)
-	byteOrder.PutUint16(prefixBuffer, hint.KeySize)
-	byteOrder.PutUint32(prefixBuffer, hint.ValueSize)
-	byteOrder.PutUint32(prefixBuffer, hint.ValueOffset)
+	byteOrder.PutUint32(prefixBuffer[:TSSTAMP_SIZE], hint.Tstamp)
+	byteOrder.PutUint16(prefixBuffer[TSSTAMP_SIZE:TSSTAMP_SIZE+KEY_SIZE], hint.KeySize)
+	byteOrder.PutUint32(prefixBuffer[TSSTAMP_SIZE+KEY_SIZE:TSSTAMP_SIZE+KEY_SIZE+VALUE_SIZE], hint.ValueSize)
+	byteOrder.PutUint32(prefixBuffer[prefixSize-VALUE_OFFSET_SIZE:], hint.ValueOffset)
 
 	_, err := c.w.Write(prefixBuffer)
 	if err != nil {
@@ -154,6 +156,9 @@ func (c *Codec) EncodeHint(hint *Hint) (int64, error) {
 	_, err = c.w.Write(hint.Key)
 	if err != nil {
 		return 0, ErrWritingValue
+	}
+	if flushErr := c.w.Flush(); flushErr != nil {
+		return 0, flushErr
 	}
 	return int64(prefixSize + len(hint.Key)), nil
 }

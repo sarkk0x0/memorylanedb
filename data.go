@@ -30,6 +30,10 @@ func (e *Entry) produceRecord(id int) (Key, EntryItem) {
 	return key, entryItem
 }
 
+func (e *Entry) BytesToWrite() int64 {
+	return int64(4 + 4 + 2 + 4 + uint32(e.KeySize) + e.ValueSize)
+}
+
 type Datafile interface {
 	ID() int
 	Name() string
