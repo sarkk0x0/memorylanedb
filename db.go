@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"syscall"
 )
@@ -17,6 +18,7 @@ type Option struct {
 const (
 	DATAFILE_SUFFIX = ".datafile"
 	HINTFILE_SUFFIX = ".hintfile"
+	TOMBSTONE_VALUE = "XXXX"
 )
 
 type DB struct {
@@ -36,13 +38,13 @@ func NewDB(path string, opts Option) (*DB, error) {
 
 	state := make(map[Key]EntryItem)
 	db := DB{
+		path:       path,
 		instanceFD: *fd,
 		state:      state,
 	}
-	//Todo: load in-memory state from datafiles and hintfiles if existing
 	loadErr := db.loadDB()
 	if loadErr != nil {
-		db.Close()
+		loadErr = db.Close()
 		return nil, loadErr
 	}
 	return &db, nil
@@ -64,39 +66,188 @@ func (db *DB) Put(key Key, value []byte) error {
 		return ErrValueGreaterThanMax
 	}
 	// append to active file
-
-	// update keydir
+	if err := db.put([]byte(key), value); err != nil {
+		return err
+	}
 	return nil
 }
 
 func (db *DB) Get(key Key) ([]byte, error) {
-	return nil, nil
+	item, ok := db.state[key]
+	if !ok {
+		return nil, ErrKeyNotFound
+	}
+	fileID := int(item.fileId)
+	var df Datafile
+
+	if fileID == db.activeDataFile.ID() {
+		df = db.activeDataFile
+	} else {
+		df, ok = db.immutableDataFiles[fileID]
+		if !ok {
+			return nil, ErrKeyNotFound
+		}
+	}
+	entry, _, err := df.ReadFrom(item.valueOffset, item.valueSize)
+	if err != nil {
+		return nil, err
+	}
+	return entry.Value, nil
+
 }
 
 func (db *DB) Has(key Key) (bool, error) {
-	return false, nil
+	_, ok := db.state[key]
+	return ok, nil
 }
 
 func (db *DB) Delete(key Key) error {
+	// write tombstone value in datafile
+	if err := db.Put(key, []byte(TOMBSTONE_VALUE)); err != nil {
+		return err
+	}
+	// delete key from state
+	delete(db.state, key)
+	return nil
+}
+
+func (db *DB) sync() error {
+	return db.activeDataFile.Sync()
+}
+
+func (db *DB) Close() error {
+	for _, df := range db.immutableDataFiles {
+		if err := df.Close(); err != nil {
+			return err
+		}
+	}
+
+	err := db.activeDataFile.Close()
+	if err != nil {
+		return err
+	}
+	return syscall.Flock(int(db.instanceFD), syscall.LOCK_UN)
+}
+
+func (db *DB) loadDB() error {
+	/*
+		Load the DB from the datafiles and hintfiles
+	*/
+	// find all datafiles in path by globbing
+	filenames, err := filepath.Glob(fmt.Sprintf("%s/*.%s", db.path, DATAFILE_SUFFIX))
+	sort.Strings(filenames)
+	if err != nil {
+		return err
+	}
+	hintfiles, err := filepath.Glob(fmt.Sprintf("%s/*.%s", db.path, HINTFILE_SUFFIX))
+	hintfileIDs := ExtractIDsFromFilenames(hintfiles)
+
+	activeDataFileID := 0
+	for _, fn := range filenames {
+		// for each datafile, check if it has a hintfile
+		id, err := extractIDFromFilename(fn)
+		if err != nil {
+			continue
+		}
+		df, err := NewDatafile(db.path, id, true)
+		db.immutableDataFiles[id] = df
+
+		// if hintfile, load keydir from hintfile
+		if Contains(id, hintfileIDs) {
+			hf, err := OpenHintfile(db.path, id)
+			if err != nil {
+				return err
+			}
+			for {
+				hint, hintErr := hf.Read()
+				if hintErr != nil {
+					if hintErr == io.EOF {
+						break
+					} else {
+						return hintErr
+					}
+				}
+				// map hint to keydir entry
+				key, entryItem := hint.produceRecord(id)
+				db.state[key] = entryItem
+			}
+			hf.Close()
+		} else {
+			// read entry from datafile directly
+			if err != nil {
+				return err
+			}
+			var offset uint32
+			for {
+				entry, bytesRead, entryErr := df.Read()
+				if entryErr != nil {
+					if entryErr == io.EOF {
+						break
+					} else {
+						return entryErr
+					}
+				}
+				// map entry to keydir entry
+				key, entryItem := entry.produceRecord(id, offset, uint32(bytesRead))
+				db.state[key] = entryItem
+
+				offset += uint32(bytesRead)
+			}
+		}
+		activeDataFileID = id
+	}
+	aDf, aErr := NewDatafile(db.path, activeDataFileID, false)
+	if aErr != nil {
+		return aErr
+	}
+	db.activeDataFile = aDf
+
+	return nil
+}
+
+func (db *DB) put(key, value []byte) error {
+	// check if active file needs rotation
+	if err := db.rotateActiveFile(); err != nil {
+		return err
+	}
+	entry := NewEntry(key, value)
+	offset, bytesWritten, err := db.activeDataFile.Write(entry)
+	if err != nil {
+		return err
+	}
+	K, entryItem := entry.produceRecord(db.activeDataFile.ID(), uint32(offset), uint32(bytesWritten))
+	db.state[K] = entryItem
+	return nil
+}
+
+func (db *DB) rotateActiveFile() error {
+	if db.activeDataFile.Size() < MAX_DATAFILE_SIZE {
+		return nil
+	}
+	// close activeFile
+	if err := db.activeDataFile.Close(); err != nil {
+		return err
+	}
+	// add activefile to immutable datafiles
+	currID := db.activeDataFile.ID()
+	df, err := NewDatafile(db.path, currID, true)
+	if err != nil {
+		return err
+	}
+	db.immutableDataFiles[currID] = df
+	// create new activefile
+	newDf, err := NewDatafile(db.path, currID+1, false)
+	if err != nil {
+		return err
+	}
+
+	// set current activefile
+	db.activeDataFile = newDf
 	return nil
 }
 
 func (db *DB) merge() {
 
-}
-
-func (db *DB) sync() {
-
-}
-
-func (db *DB) append(key, value []byte) {
-	// get active data file
-}
-
-func (db *DB) Close() error {
-	err := syscall.Flock(int(db.instanceFD), syscall.LOCK_UN)
-
-	return err
 }
 
 func open(path string) (*uintptr, error) {
@@ -105,8 +256,11 @@ func open(path string) (*uintptr, error) {
 		if errors.Is(err, os.ErrNotExist) {
 			err = os.Mkdir(path, fs.ModeDir|fs.ModePerm)
 			if err != nil {
-
+				return nil, err
 			}
+			fileInfo, _ = os.Stat(path)
+		} else {
+			return nil, err
 		}
 	}
 	if !fileInfo.IsDir() {
@@ -129,70 +283,4 @@ func open(path string) (*uintptr, error) {
 
 	return &fd, nil
 
-}
-
-func (db *DB) loadDB() error {
-	/*
-		Load the DB from the datafiles and hintfiles
-	*/
-	// find all datafiles in path by globbing
-	filenames, err := filepath.Glob(fmt.Sprintf("%s/%s", db.path, DATAFILE_SUFFIX))
-	if err != nil {
-		return err
-	}
-	hintfiles, err := filepath.Glob(fmt.Sprintf("%s/%s", db.path, HINTFILE_SUFFIX))
-	hintfileIDs := ExtractIDsFromFilenames(hintfiles)
-
-	for _, fn := range filenames {
-		// for each datafile, check if it has a hintfile
-		id, err := extractIDFromFilename(fn)
-		if err != nil {
-			continue
-		}
-		// if hintfile, load keydir from hintfile
-		if Contains(id, hintfileIDs) {
-			hf, err := OpenHintfile(db.path, id)
-			if err != nil {
-				return err
-			}
-			for {
-				hint, hintErr := hf.Read()
-				if hintErr != nil {
-					if errors.Is(hintErr, io.EOF) {
-						break
-					} else {
-						return hintErr
-					}
-				}
-				// map hint to keydir entry
-				key, entryItem := hint.produceRecord(id)
-				db.state[key] = entryItem
-			}
-			hf.Close()
-		} else {
-			// read entry from datafile directly
-			df, err := NewDatafile(db.path, id, true)
-			if err != nil {
-				return err
-			}
-			var offset uint32
-			for {
-				entry, bytesRead, entryErr := df.Read()
-				if entryErr != nil {
-					if errors.Is(entryErr, io.EOF) {
-						break
-					} else {
-						return entryErr
-					}
-				}
-				// map entry to keydir entry
-				key, entryItem := entry.produceRecord(id)
-				entryItem.valueOffset = offset
-				db.state[key] = entryItem
-
-				offset += uint32(bytesRead)
-			}
-		}
-	}
-	return nil
 }

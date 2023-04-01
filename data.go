@@ -3,8 +3,10 @@ package memorylanedb
 import (
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 var ErrWriterNotExposed = errors.New("can not write for the datafile")
@@ -20,12 +22,24 @@ type Entry struct {
 	Value     []byte
 }
 
-func (e *Entry) produceRecord(id int) (Key, EntryItem) {
+func NewEntry(key, value []byte) Entry {
+	return Entry{
+		Checksum:  crc32.ChecksumIEEE(value),
+		Tstamp:    uint32(time.Now().Unix()),
+		KeySize:   uint16(len(key)),
+		ValueSize: uint32(len(value)),
+		Key:       key,
+		Value:     value,
+	}
+}
+
+func (e *Entry) produceRecord(id int, offset, size uint32) (Key, EntryItem) {
 	key := Key(e.Key)
 	entryItem := EntryItem{
-		fileId:    uint(id),
-		valueSize: e.ValueSize,
-		tstamp:    e.Tstamp,
+		fileId:      uint(id),
+		tstamp:      e.Tstamp,
+		valueSize:   size,
+		valueOffset: offset,
 	}
 	return key, entryItem
 }
@@ -39,6 +53,9 @@ type Datafile interface {
 	Name() string
 	Write(Entry) (int64, int64, error)
 	Read() (Entry, int64, error)
+	Close() error
+	Size() int64
+	Sync() error
 	ReadFrom(index, size uint32) (Entry, int64, error)
 }
 
@@ -93,6 +110,10 @@ func (df *datafile) Type() string {
 	return "datafile"
 }
 
+func (df *datafile) Size() int64 {
+	return df.offset
+}
+
 func (df *datafile) Write(entry Entry) (offset int64, bytesWritten int64, err error) {
 	// encode the entry in a binary format
 	// |
@@ -115,4 +136,19 @@ func (df *datafile) ReadFrom(index, size uint32) (entry Entry, bytesRead int64, 
 	bytesRead = int64(br)
 	err = df.codec.DecodeSingleEntry(buf, &entry)
 	return
+}
+
+func (df *datafile) Close() error {
+	// flush from in-memory fs cache to disk
+	err := df.Sync()
+	if err != nil {
+		return err
+	}
+	return df.file.Close()
+
+}
+
+func (df *datafile) Sync() error {
+	// flush from in-memory fs cache to disk
+	return df.file.Sync()
 }

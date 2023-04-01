@@ -9,4 +9,6 @@ var (
 	ErrKeyZeroLength       = errors.New("zero key length")
 	ErrKeyGreaterThanMax   = errors.New("key size is greater than configured threshold")
 	ErrValueGreaterThanMax = errors.New("value size is greater than configured threshold")
+
+	ErrKeyNotFound = errors.New("key not found")
 )
