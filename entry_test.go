@@ -2,22 +2,19 @@ package memorylanedb
 
 import (
 	"fmt"
-	assert2 "github.com/stretchr/testify/assert"
 	"hash/crc32"
-	"io/ioutil"
-	"os"
 	"testing"
 	"time"
+
+	assert2 "github.com/stretchr/testify/assert"
 )
 
 func TestDatafile(t *testing.T) {
 	assert := assert2.New(t)
-	directory, err := ioutil.TempDir("", "mldb")
-	assert.NoError(err)
-	defer os.RemoveAll(directory)
+	directory := t.TempDir()
 
 	var id int
-	df, err := NewDatafile(directory, id, false)
+	df, err := NewDatafile(directory, id)
 	if assert.NoError(err) {
 		//test that new os file is created with valid format
 		t.Run("filePath", func(t *testing.T) {
@@ -31,9 +28,9 @@ func TestDatafile(t *testing.T) {
 			entry := generateEntry([]byte("testKey"), []byte("randomValue"), tstamp)
 			offset, bytesWritten, err := df.Write(entry)
 			assert.NoError(err)
-			var expectedOffset int64
+			var expectedOffset int64 = 0
 			assert.Equal(expectedOffset, offset)
-			assert.Equal(entry.BytesToWrite(), bytesWritten)
+			assert.Equal(entry.Size(), bytesWritten)
 
 			expectedOffset += bytesWritten
 
@@ -41,7 +38,7 @@ func TestDatafile(t *testing.T) {
 			offset, bytesWritten, err = df.Write(entry)
 			assert.NoError(err)
 			assert.Equal(expectedOffset, offset)
-			assert.Equal(entry.BytesToWrite(), bytesWritten)
+			assert.Equal(entry.Size(), bytesWritten)
 		})
 
 		t.Run("Read", func(t *testing.T) {

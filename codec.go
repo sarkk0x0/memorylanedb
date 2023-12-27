@@ -3,26 +3,7 @@ package memorylanedb
 import (
 	"bufio"
 	"encoding/binary"
-	"errors"
 	"io"
-)
-
-const (
-	// In bytes
-	CRC_SIZE          = 4
-	TSSTAMP_SIZE      = 4
-	KEY_SIZE          = 2
-	VALUE_SIZE        = 4
-	VALUE_OFFSET_SIZE = 4
-)
-
-var (
-	ErrWritingPrefix = errors.New("error writing entry prefix")
-	ErrWritingKey    = errors.New("error writing key")
-	ErrWritingValue  = errors.New("error writing value")
-
-	ErrorNilEncoding = errors.New("error encoding nil entry")
-	ErrorNilDecoding = errors.New("error decoding nil entry")
 )
 
 var byteOrder = binary.LittleEndian
@@ -43,7 +24,7 @@ func (c *Codec) EncodeEntry(entry *Entry) (int64, error) {
 	if entry == nil {
 		return 0, ErrorNilEncoding
 	}
-	prefixSize := CRC_SIZE + TSSTAMP_SIZE + KEY_SIZE + VALUE_SIZE
+	prefixSize := entry.HeaderSize()
 	prefixBuffer := make([]byte, prefixSize)
 	byteOrder.PutUint32(prefixBuffer[:CRC_SIZE], entry.Checksum)
 	byteOrder.PutUint32(prefixBuffer[CRC_SIZE:CRC_SIZE+TSSTAMP_SIZE], entry.Tstamp)
@@ -64,17 +45,18 @@ func (c *Codec) EncodeEntry(entry *Entry) (int64, error) {
 	if err != nil {
 		return 0, ErrWritingValue
 	}
+
 	if flushErr := c.w.Flush(); flushErr != nil {
 		return 0, flushErr
 	}
-	return int64(prefixSize + len(entry.Key) + len(entry.Value)), nil
+	return entry.Size(), nil
 }
 
 func (c *Codec) DecodeEntry(entry *Entry) (int64, error) {
 	if entry == nil {
 		return 0, ErrorNilDecoding
 	}
-	prefixSize := CRC_SIZE + TSSTAMP_SIZE + KEY_SIZE + VALUE_SIZE
+	prefixSize := entry.HeaderSize()
 	prefixBuffer := make([]byte, prefixSize)
 
 	_, err := io.ReadFull(c.r, prefixBuffer)
@@ -109,12 +91,12 @@ func (c *Codec) DecodeEntry(entry *Entry) (int64, error) {
 	}
 	entry.Value = valueBuf
 
-	return int64(prefixSize + len(entry.Key) + len(entry.Value)), nil
+	return entry.Size(), nil
 }
 
-func (c *Codec) DecodeSingleEntry(buf []byte, entry *Entry) error {
+func (c *Codec) DecodeSingleEntry(buf []byte, entry *Entry) (int64, error) {
 	if entry == nil {
-		return ErrorNilDecoding
+		return 0, ErrorNilDecoding
 	}
 	var ptr uint32 = 0
 	entry.Checksum = byteOrder.Uint32(buf[ptr : ptr+CRC_SIZE])
@@ -134,14 +116,14 @@ func (c *Codec) DecodeSingleEntry(buf []byte, entry *Entry) error {
 	entry.Key = bufWithoutPrefix[:entry.KeySize]
 	entry.Value = bufWithoutPrefix[entry.KeySize:]
 
-	return nil
+	return entry.Size(), nil
 }
 
 func (c *Codec) EncodeHint(hint *Hint) (int64, error) {
 	if hint == nil {
 		return 0, ErrorNilEncoding
 	}
-	prefixSize := TSSTAMP_SIZE + KEY_SIZE + VALUE_SIZE + VALUE_OFFSET_SIZE
+	prefixSize := hint.HeaderSize()
 	prefixBuffer := make([]byte, prefixSize)
 	byteOrder.PutUint32(prefixBuffer[:TSSTAMP_SIZE], hint.Tstamp)
 	byteOrder.PutUint16(prefixBuffer[TSSTAMP_SIZE:TSSTAMP_SIZE+KEY_SIZE], hint.KeySize)
@@ -160,14 +142,14 @@ func (c *Codec) EncodeHint(hint *Hint) (int64, error) {
 	if flushErr := c.w.Flush(); flushErr != nil {
 		return 0, flushErr
 	}
-	return int64(prefixSize + len(hint.Key)), nil
+	return hint.Size(), nil
 }
 
 func (c *Codec) DecodeHint(hint *Hint) error {
 	if hint == nil {
 		return ErrorNilDecoding
 	}
-	prefixSize := TSSTAMP_SIZE + KEY_SIZE + VALUE_SIZE + VALUE_OFFSET_SIZE
+	prefixSize := hint.HeaderSize()
 	prefixBuffer := make([]byte, prefixSize)
 
 	_, err := io.ReadFull(c.r, prefixBuffer)

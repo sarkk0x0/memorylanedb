@@ -2,11 +2,16 @@ package memorylanedb
 
 import (
 	"bytes"
-	assert2 "github.com/stretchr/testify/assert"
 	"math/rand"
 	"testing"
 	"time"
+
+	assert2 "github.com/stretchr/testify/assert"
 )
+
+/*
+Test correctness of codec implementation
+*/
 
 func TestEntry(t *testing.T) {
 	assert := assert2.New(t)
@@ -24,11 +29,11 @@ func TestEntry(t *testing.T) {
 		Value:     value,
 	}
 
-	t.Run("encodyEntry", func(t *testing.T) {
+	t.Run("encodeEntry", func(t *testing.T) {
 		_, err := codec.EncodeEntry(&entry)
 		assert.NoError(err)
 	})
-	t.Run("decodyEntry", func(t *testing.T) {
+	t.Run("decodeEntry", func(t *testing.T) {
 		decodedEntry := Entry{}
 		_, err := codec.DecodeEntry(&decodedEntry)
 		assert.NoError(err)
@@ -63,8 +68,4 @@ func TestHint(t *testing.T) {
 		t.Logf("%+v", decodedHint)
 	})
 
-}
-
-func Benchmark_Encode(b *testing.B) {
-	return
 }

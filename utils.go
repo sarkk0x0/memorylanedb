@@ -7,6 +7,11 @@ import (
 	"strings"
 )
 
+type Iterator[T any] interface {
+	getNext() (T, error)
+	hasNext() bool
+}
+
 func extractIDFromFilename(filename string) (int, error) {
 	basefn := filepath.Base(filename)
 	ext := filepath.Ext(basefn)

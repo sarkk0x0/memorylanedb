@@ -1,10 +1,13 @@
 package memorylanedb
 
 import (
-	assert2 "github.com/stretchr/testify/assert"
-	"io/ioutil"
+	"fmt"
 	"os"
+	"path/filepath"
+	"sort"
 	"testing"
+
+	assert2 "github.com/stretchr/testify/assert"
 )
 
 func TestAll(t *testing.T) {
@@ -18,9 +21,7 @@ func TestAll(t *testing.T) {
 	var err error
 
 	assert := assert2.New(t)
-	directory, err := ioutil.TempDir("", "mldb")
-	assert.NoError(err)
-	defer os.RemoveAll(directory)
+	directory := t.TempDir()
 
 	t.Run("Open", func(t *testing.T) {
 		db, err = NewDB(directory, Option{})
@@ -37,4 +38,30 @@ func TestAll(t *testing.T) {
 		assert.NoError(err)
 		assert.Equal([]byte("bar"), value)
 	})
+}
+
+func TestLoadDB(t *testing.T) {
+	assert := assert2.New(t)
+	directory := t.TempDir()
+
+	t.Run("GlobDatafileAndMergeFiles", func(t *testing.T) {
+		for i := 0; i < 3; i++ {
+			path := fmt.Sprintf(directory+"/"+datafileDefaultName, i)
+			_, err := os.Create(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path = fmt.Sprintf(directory+"/"+mergedDatafileDefaultName, i)
+			_, err = os.Create(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		globPath := fmt.Sprintf("%s/*%s*", directory, DATAFILE_SUFFIX)
+		filenames, err := filepath.Glob(globPath)
+		assert.NoError(err)
+		sort.Strings(filenames)
+		assert.Len(filenames, 6)
+	})
+
 }
