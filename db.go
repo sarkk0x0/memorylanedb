@@ -239,10 +239,13 @@ func (db *DB) loadDB() error {
 					}
 				}
 
+				key, entryItem := entry.produceRecord(id, offset, uint32(bytesRead))
+
 				// update index if entry is not a deletion
-				if !bytes.Equal(entry.Value, []byte(TOMBSTONE_VALUE)) {
+				if bytes.Equal(entry.Value, []byte(TOMBSTONE_VALUE)) {
+					delete(db.keyDir, key)
+				} else {
 					// map entry to keydir entry
-					key, entryItem := entry.produceRecord(id, offset, uint32(bytesRead))
 					db.keyDir[key] = entryItem
 				}
 
