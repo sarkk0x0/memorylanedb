@@ -1,6 +1,7 @@
 package memorylanedb
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"hash/crc32"
@@ -83,7 +84,7 @@ func (db *DB) Put(key Key, value []byte) error {
 	if key.length() > MAX_KEY_SIZE {
 		return ErrKeyGreaterThanMax
 	}
-	if len(value) > MAX_VALUE_SIZE {
+	if len(value) > int(db.maxValueSize) {
 		return ErrValueGreaterThanMax
 	}
 	// append to active file
@@ -175,8 +176,7 @@ func (db *DB) Close() error {
 
 func (db *DB) loadDB() error {
 	/*
-		Load the DB from the datafiles and hintfiles
-		We don't load mergefiles, the assumption here is a mergefile must have a corresponding hintfile
+		Load the DB from the datafiles/mergefiles and hintfiles
 	*/
 	// find all datafiles in path by globbing
 	filenames, err := filepath.Glob(fmt.Sprintf("%s/*%s*", db.path, DATAFILE_SUFFIX))
@@ -238,9 +238,13 @@ func (db *DB) loadDB() error {
 						return entryErr
 					}
 				}
-				// map entry to keydir entry
-				key, entryItem := entry.produceRecord(id, offset, uint32(bytesRead))
-				db.keyDir[key] = entryItem
+
+				// update index if entry is not a deletion
+				if !bytes.Equal(entry.Value, []byte(TOMBSTONE_VALUE)) {
+					// map entry to keydir entry
+					key, entryItem := entry.produceRecord(id, offset, uint32(bytesRead))
+					db.keyDir[key] = entryItem
+				}
 
 				offset += uint32(bytesRead)
 			}
