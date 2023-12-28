@@ -3,7 +3,6 @@ module github.com/sarkk0x0/memorylanedb
 go 1.18
 
 require (
-	github.com/gorilla/mux v1.8.0
 	github.com/rs/zerolog v1.29.0
 	github.com/stretchr/testify v1.8.2
 )

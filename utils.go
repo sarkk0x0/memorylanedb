@@ -15,7 +15,7 @@ type Iterator[T any] interface {
 func extractIDFromFilename(filename string) (int, error) {
 	basefn := filepath.Base(filename)
 	ext := filepath.Ext(basefn)
-	if !Contains(ext, []string{"datafile", "hintfile"}) {
+	if !Contains(ext, []string{DATAFILE_SUFFIX, MERGED_DATAFILE_SUFFIX, HINTFILE_SUFFIX}) {
 		return -1, errors.New("invalid file extension")
 	}
 	fileIDString := strings.TrimSuffix(basefn, ext)

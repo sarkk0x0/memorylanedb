@@ -15,6 +15,12 @@ import (
 )
 
 type Option struct {
+	SyncOnWrite  bool
+	MaxValueSize uint32
+}
+
+var DefaultOptions = &Option{
+	MaxValueSize: MAX_VALUE_SIZE,
 }
 
 type foldFunc func(key Key) error
@@ -34,19 +40,28 @@ type DB struct {
 	activeDataFile     Datafile
 	immutableDataFiles map[int]Datafile // maps file ids to datafiles
 	maxFileId          int
+	maxValueSize       uint32
+	syncOnWrite        bool
 }
 
-func NewDB(path string, opts Option) (*DB, error) {
+func NewDB(path string, opts *Option) (*DB, error) {
 	fd, err := open(path)
 	if err != nil {
 		return nil, err
 	}
 
+	if opts == nil {
+		opts = DefaultOptions
+	}
+
 	state := make(map[Key]EntryItem)
 	db := DB{
-		path:       path,
-		instanceFD: *fd,
-		keyDir:     state,
+		path:               path,
+		instanceFD:         *fd,
+		keyDir:             state,
+		immutableDataFiles: make(map[int]Datafile),
+		maxValueSize:       opts.MaxValueSize,
+		syncOnWrite:        opts.SyncOnWrite,
 	}
 	loadErr := db.loadDB()
 	if loadErr != nil {
@@ -133,6 +148,13 @@ func (db *DB) Fold(f foldFunc) error {
 	return nil
 }
 
+func (db *DB) Stats() map[string]any {
+	stats := make(map[string]any)
+	stats["keys"] = len(db.keyDir)
+	stats["maxFileId"] = db.maxFileId
+	return stats
+}
+
 func (db *DB) sync() error {
 	return db.activeDataFile.Sync()
 }
@@ -167,7 +189,6 @@ func (db *DB) loadDB() error {
 		return err
 	}
 	hintfileIDs := ExtractIDsFromFilenames(hintfiles)
-
 	activeDataFileID := 0
 	for _, fn := range filenames {
 		// for each datafile, check if it has a hintfile
@@ -244,6 +265,12 @@ func (db *DB) put(key, value []byte) error {
 	offset_before_write, bytesWritten, err := db.activeDataFile.Write(entry)
 	if err != nil {
 		return err
+	}
+	if db.syncOnWrite {
+		err = db.activeDataFile.Sync()
+		if err != nil {
+			return err
+		}
 	}
 	K, entryItem := entry.produceRecord(db.activeDataFile.ID(), uint32(offset_before_write), uint32(bytesWritten))
 	db.keyDir[K] = entryItem

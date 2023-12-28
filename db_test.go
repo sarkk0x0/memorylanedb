@@ -24,7 +24,7 @@ func TestAll(t *testing.T) {
 	directory := t.TempDir()
 
 	t.Run("Open", func(t *testing.T) {
-		db, err = NewDB(directory, Option{})
+		db, err = NewDB(directory, nil)
 		assert.NoError(err)
 	})
 

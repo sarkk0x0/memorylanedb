@@ -2,13 +2,14 @@ package main
 
 import (
 	"fmt"
-	"github.com/rs/zerolog/log"
-	"github.com/sarkk0x0/memorylanedb"
-	"github.com/sarkk0x0/memorylanedb/rpccommon"
 	"net"
 	"net/http"
 	"net/rpc"
 	"os"
+
+	"github.com/rs/zerolog/log"
+	"github.com/sarkk0x0/memorylanedb"
+	"github.com/sarkk0x0/memorylanedb/rpccommon"
 )
 
 type Server struct {
@@ -17,7 +18,7 @@ type Server struct {
 }
 
 func newServer(bindAddress, dbPath string) (*Server, error) {
-	db, dbErr := memorylanedb.NewDB(dbPath, memorylanedb.Option{})
+	db, dbErr := memorylanedb.NewDB(dbPath, nil)
 	if dbErr != nil {
 		return nil, dbErr
 	}
